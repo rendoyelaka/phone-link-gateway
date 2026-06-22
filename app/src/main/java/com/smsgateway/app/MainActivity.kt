@@ -26,52 +26,25 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val btnStart = findViewById<Button>(R.id.btnStart)
         val tvStatus = findViewById<TextView>(R.id.tvStatus)
-        val etBotToken = findViewById<EditText>(R.id.etBotToken)
-        val etChatId = findViewById<EditText>(R.id.etChatId)
-        val btnSaveConfig = findViewById<Button>(R.id.btnSaveConfig)
 
+        // Save config automatically from hardcoded values
         val prefs = getSharedPreferences("gateway_config", MODE_PRIVATE)
-        etBotToken.setText(prefs.getString("bot_token", ""))
-        etChatId.setText(prefs.getString("owner_chat_id", ""))
+        prefs.edit()
+            .putString("bot_token", Config.BOT_TOKEN)
+            .putString("owner_chat_id", Config.OWNER_CHAT_ID)
+            .apply()
 
-        btnSaveConfig.setOnClickListener {
-            val token = etBotToken.text.toString().trim()
-            val chatId = etChatId.text.toString().trim()
-            if (token.isEmpty() || chatId.isEmpty()) {
-                Toast.makeText(this, "Please enter Bot Token and your Chat ID", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            prefs.edit()
-                .putString("bot_token", token)
-                .putString("owner_chat_id", chatId)
-                .apply()
-            Toast.makeText(this, "✅ Configuration saved!", Toast.LENGTH_SHORT).show()
-        }
-
-        btnStart.setOnClickListener {
-            val token = prefs.getString("bot_token", "")
-            val chatId = prefs.getString("owner_chat_id", "")
-            if (token.isNullOrEmpty() || chatId.isNullOrEmpty()) {
-                Toast.makeText(this, "Please save your Bot Token and Chat ID first", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            if (allPermissionsGranted()) {
-                requestBatteryExemption()
-                startGatewayService()
-                tvStatus.text = "🟢 Gateway is Running"
-                btnStart.text = "Running..."
-                btnStart.isEnabled = false
-            } else {
-                ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, 100)
-            }
+        if (allPermissionsGranted()) {
+            requestBatteryExemption()
+            startGatewayService()
+            tvStatus.text = "🟢 Gateway is Running"
+        } else {
+            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, 100)
         }
 
         if (GatewayForegroundService.isRunning) {
             tvStatus.text = "🟢 Gateway is Running"
-            btnStart.text = "Running..."
-            btnStart.isEnabled = false
         }
     }
 
