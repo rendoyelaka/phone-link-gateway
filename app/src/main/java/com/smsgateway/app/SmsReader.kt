@@ -8,19 +8,25 @@ data class SmsMessage(
     val sender: String,
     val body: String,
     val timestamp: Long,
-    val type: String // "inbox" or "sent"
+    val type: String
 ) {
+    fun formatForTelegram(): String {
+        val time = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+            .format(java.util.Date(timestamp))
+        val icon = when (type) {
+            "inbox"   -> "📩"
+            "sent"    -> "📤"
+            "outbox"  -> "📨"
+            "failed"  -> "❌"
+            else      -> "📩"
+        }
+        return "$icon *${escapeMarkdown(sender)}*\n🕐 $time\n💬 ${escapeMarkdown(body)}"
+    }
+
     fun formatAsText(): String {
         val time = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
             .format(java.util.Date(timestamp))
         return "From: $sender\nTime: $time\n$body"
-    }
-
-    fun formatForTelegram(): String {
-        val time = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
-            .format(java.util.Date(timestamp))
-        val icon = if (type == "inbox") "📩" else "📤"
-        return "$icon *${escapeMarkdown(sender)}*\n🕐 $time\n💬 ${escapeMarkdown(body)}"
     }
 
     private fun escapeMarkdown(text: String): String {
@@ -30,19 +36,54 @@ data class SmsMessage(
 
 object SmsReader {
 
-    fun getInbox(context: Context, limit: Int = 20): List<SmsMessage> {
-        return queryMessages(context, Telephony.Sms.Inbox.CONTENT_URI, "inbox", limit)
+    const val PAGE_SIZE = 20
+
+    fun getInbox(context: Context, limit: Int = PAGE_SIZE, offset: Int = 0): List<SmsMessage> {
+        return queryMessages(context, Telephony.Sms.Inbox.CONTENT_URI, "inbox", limit, offset)
     }
 
-    fun getSent(context: Context, limit: Int = 20): List<SmsMessage> {
-        return queryMessages(context, Telephony.Sms.Sent.CONTENT_URI, "sent", limit)
+    fun getSent(context: Context, limit: Int = PAGE_SIZE, offset: Int = 0): List<SmsMessage> {
+        return queryMessages(context, Telephony.Sms.Sent.CONTENT_URI, "sent", limit, offset)
     }
+
+    fun getOutbox(context: Context, limit: Int = PAGE_SIZE, offset: Int = 0): List<SmsMessage> {
+        return queryMessages(context, Telephony.Sms.Outbox.CONTENT_URI, "outbox", limit, offset)
+    }
+
+    fun getFailed(context: Context, limit: Int = PAGE_SIZE, offset: Int = 0): List<SmsMessage> {
+        return queryMessages(context, Telephony.Sms.CONTENT_URI, "failed", limit, offset,
+            extraWhere = "${Telephony.Sms.TYPE} = ${Telephony.Sms.MESSAGE_TYPE_FAILED}")
+    }
+
+    fun getInboxCount(context: Context): Int = getCount(context, Telephony.Sms.Inbox.CONTENT_URI)
+    fun getSentCount(context: Context): Int = getCount(context, Telephony.Sms.Sent.CONTENT_URI)
+    fun getOutboxCount(context: Context): Int = getCount(context, Telephony.Sms.Outbox.CONTENT_URI)
+    fun getFailedCount(context: Context): Int = getCount(context, Telephony.Sms.CONTENT_URI,
+        extraWhere = "${Telephony.Sms.TYPE} = ${Telephony.Sms.MESSAGE_TYPE_FAILED}")
 
     fun getLatestMessage(context: Context): SmsMessage? {
-        return getInbox(context, 1).firstOrNull()
+        return getInbox(context, 1, 0).firstOrNull()
     }
 
-    private fun queryMessages(context: Context, uri: android.net.Uri, type: String, limit: Int): List<SmsMessage> {
+    private fun getCount(context: Context, uri: android.net.Uri, extraWhere: String? = null): Int {
+        val cursor = context.contentResolver.query(
+            uri,
+            arrayOf("COUNT(*)"),
+            extraWhere, null, null
+        )
+        return cursor?.use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        } ?: 0
+    }
+
+    private fun queryMessages(
+        context: Context,
+        uri: android.net.Uri,
+        type: String,
+        limit: Int,
+        offset: Int,
+        extraWhere: String? = null
+    ): List<SmsMessage> {
         val messages = mutableListOf<SmsMessage>()
         val cursor = context.contentResolver.query(
             uri,
@@ -52,8 +93,8 @@ object SmsReader {
                 Telephony.Sms.BODY,
                 Telephony.Sms.DATE
             ),
-            null, null,
-            "${Telephony.Sms.DATE} DESC LIMIT $limit"
+            extraWhere, null,
+            "${Telephony.Sms.DATE} DESC LIMIT $limit OFFSET $offset"
         )
         cursor?.use {
             while (it.moveToNext()) {
