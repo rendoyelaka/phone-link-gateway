@@ -1,6 +1,7 @@
 package com.smsgateway.app
 
 import android.content.Context
+import android.telephony.TelephonyManager
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.wifi.WifiManager
@@ -68,6 +69,24 @@ object DeviceInfoHelper {
         return "Unknown"
     }
 
+    fun getCountryFlag(context: Context): String {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            val countryCode = tm.networkCountryIso.uppercase()
+            if (countryCode.length == 2) countryCodeToFlag(countryCode) else "🌐"
+        } catch (e: Exception) {
+            "🌐"
+        }
+    }
+
+    fun countryCodeToFlag(countryCode: String): String {
+        // Convert ISO country code to flag emoji
+        // Each letter maps to a regional indicator symbol
+        return countryCode.uppercase().map { char ->
+            Character.toChars(char.code + 0x1F1A5).concatToString()
+        }.joinToString("")
+    }
+
     fun getBatteryEmoji(percent: Int): String {
         return when {
             percent >= 80 -> "🔋"
@@ -88,7 +107,7 @@ object DeviceInfoHelper {
 🤖 Android: ${info.androidVersion}
 ${getBatteryEmoji(info.batteryPercent)} Battery: ${info.batteryPercent}%
 $chargingText
-🌐 Dashboard: http://${info.ipAddress}:8080
+${getCountryFlag(context)} ${info.ipAddress}:8080
         """.trimIndent()
     }
 
@@ -107,7 +126,7 @@ $chargingText
 $statusDot$pingText
 📱 ${info.brandModel}
 ${getBatteryEmoji(info.batteryPercent)} Battery: ${info.batteryPercent}% ($chargingText)
-🌐 http://${info.ipAddress}:8080
+${getCountryFlag(context)} ${info.ipAddress}:8080
 ✅ Service running
         """.trimIndent()
     }
