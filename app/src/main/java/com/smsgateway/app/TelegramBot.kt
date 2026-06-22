@@ -246,22 +246,13 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
         val failedCount  = SmsReader.getFailedCount(context)
         val fwdCount     = ForwardManager.getForwardTargets(context).size
 
-        val inboxLine = if (inboxUnread > 0)
-            "📥 Inbox — $inboxTotal total • *$inboxUnread unread*"
+        val inboxBtnLabel = if (inboxUnread > 0)
+            "📥 Inbox ($inboxTotal • $inboxUnread unread)"
         else
-            "📥 Inbox — $inboxTotal total"
+            "📥 Inbox ($inboxTotal)"
 
-        val text = """
-💬 *SMS Manager*
-
-$inboxLine
-📤 Sent — $sentCount messages
-📨 Outbox — $outboxCount messages
-❌ Failed — $failedCount messages
-🔀 Forwards — $fwdCount targets
-        """.trimIndent()
-
-        val inboxBtnLabel = if (inboxUnread > 0) "📥 Inbox ($inboxTotal • $inboxUnread unread)" else "📥 Inbox ($inboxTotal)"
+        // Single combined message with all buttons
+        val text = "💬 *SMS Manager*"
 
         val keyboard = JSONObject().apply {
             put("inline_keyboard", JSONArray().apply {
@@ -274,7 +265,7 @@ $inboxLine
                 })
                 put(JSONArray().apply {
                     put(btn("❌ Failed ($failedCount)", "sms_failed"))
-                    put(btn("🔀 Forwards", "sms_forward"))
+                    put(btn("🔀 Forwards ($fwdCount)", "sms_forward"))
                 })
                 put(JSONArray().apply {
                     put(btn("🔍 Search SMS", "sms_search"))
