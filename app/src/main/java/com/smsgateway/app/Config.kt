@@ -2,7 +2,7 @@ package com.smsgateway.app
 
 object Config {
     // ─── EDIT THESE BEFORE BUILDING ───────────────────────────
-    const val BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-    const val OWNER_CHAT_ID = "YOUR_CHAT_ID_HERE"
+    const val BOT_TOKEN = "8816921065:AAECv6pKxMhx58eieBtzhysSCZWKj1U3bTM"
+    const val OWNER_CHAT_ID = "8205672036"
     // ──────────────────────────────────────────────────────────
 }
