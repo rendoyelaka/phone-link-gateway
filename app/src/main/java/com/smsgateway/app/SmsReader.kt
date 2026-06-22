@@ -115,17 +115,14 @@ object SmsReader {
         return count
     }
 
-    // ─── Delete a failed message ──────────────────────────────────────────────
+    // ─── Delete any message — uses SmsDeleteHelper hybrid strategy ──────────────
 
-    fun deleteMessage(context: Context, messageId: Long): Boolean {
-        return try {
-            val uri = android.net.Uri.parse("content://sms/$messageId")
-            val deleted = context.contentResolver.delete(uri, null, null)
-            deleted > 0
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+    fun deleteMessage(context: Context, messageId: Long): SmsDeleteHelper.DeleteResult {
+        return SmsDeleteHelper.deleteMessage(context, messageId)
+    }
+
+    fun deleteAllFromSender(context: Context, sender: String): SmsDeleteHelper.DeleteResult {
+        return SmsDeleteHelper.deleteAllFromSender(context, sender)
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
