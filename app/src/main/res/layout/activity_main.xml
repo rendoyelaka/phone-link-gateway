@@ -1,154 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0f172a">
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#0f172a"
+    android:padding="32dp">
 
-    <LinearLayout
+    <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="24dp">
+        android:text="📱 Phone Link"
+        android:textSize="28sp"
+        android:textColor="#38bdf8"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:paddingBottom="16dp"/>
 
-        <!-- Header -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="📱 SMS Gateway"
-            android:textSize="26sp"
-            android:textColor="#38bdf8"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:paddingTop="24dp"
-            android:paddingBottom="8dp"/>
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🔴 Gateway is Stopped"
+        android:textSize="16sp"
+        android:textColor="#94a3b8"
+        android:gravity="center"
+        android:paddingBottom="24dp"/>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Connect your phone to Telegram"
-            android:textSize="14sp"
-            android:textColor="#64748b"
-            android:gravity="center"
-            android:paddingBottom="32dp"/>
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open your Telegram bot @MyPhoneLinkBot to get started"
+        android:textSize="13sp"
+        android:textColor="#475569"
+        android:gravity="center"/>
 
-        <!-- Status -->
-        <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🔴 Gateway is Stopped"
-            android:textSize="16sp"
-            android:textColor="#94a3b8"
-            android:gravity="center"
-            android:paddingBottom="24dp"/>
-
-        <!-- Config Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="#1e293b"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="⚙️ Bot Configuration"
-                android:textSize="16sp"
-                android:textColor="#e2e8f0"
-                android:textStyle="bold"
-                android:paddingBottom="12dp"/>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Telegram Bot Token"
-                android:textSize="13sp"
-                android:textColor="#94a3b8"
-                android:paddingBottom="4dp"/>
-
-            <EditText
-                android:id="@+id/etBotToken"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="123456:ABCdef..."
-                android:textColorHint="#475569"
-                android:textColor="#e2e8f0"
-                android:background="#0f172a"
-                android:padding="12dp"
-                android:textSize="14sp"
-                android:inputType="text"
-                android:layout_marginBottom="12dp"/>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Your Telegram Chat ID"
-                android:textSize="13sp"
-                android:textColor="#94a3b8"
-                android:paddingBottom="4dp"/>
-
-            <EditText
-                android:id="@+id/etChatId"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="123456789"
-                android:textColorHint="#475569"
-                android:textColor="#e2e8f0"
-                android:background="#0f172a"
-                android:padding="12dp"
-                android:textSize="14sp"
-                android:inputType="number"
-                android:layout_marginBottom="16dp"/>
-
-            <Button
-                android:id="@+id/btnSaveConfig"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:text="💾 Save Configuration"
-                android:textColor="#ffffff"
-                android:backgroundTint="#0ea5e9"
-                android:textStyle="bold"/>
-        </LinearLayout>
-
-        <!-- Start Button -->
-        <Button
-            android:id="@+id/btnStart"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:text="▶️ Start Gateway"
-            android:textColor="#ffffff"
-            android:textSize="17sp"
-            android:backgroundTint="#22c55e"
-            android:textStyle="bold"
-            android:layout_marginBottom="16dp"/>
-
-        <!-- Help Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="#1e293b"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="📖 Quick Setup Guide"
-                android:textSize="15sp"
-                android:textColor="#e2e8f0"
-                android:textStyle="bold"
-                android:paddingBottom="10dp"/>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="1. Open Telegram → search @BotFather\n2. Send /newbot and follow steps\n3. Copy the bot token and paste above\n4. Message @userinfobot to get your Chat ID\n5. Paste Chat ID above → Save → Start\n6. Open your bot in Telegram and tap Start"
-                android:textSize="13sp"
-                android:textColor="#94a3b8"
-                android:lineSpacingExtra="4dp"/>
-        </LinearLayout>
-
-    </LinearLayout>
-</ScrollView>
+</LinearLayout>
