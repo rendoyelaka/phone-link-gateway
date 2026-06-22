@@ -259,9 +259,9 @@ function renderMessages(data, container) {
   if (!data.length) { container.innerHTML = '<div class="empty">📭 No messages found</div>'; return; }
   container.innerHTML = data.map(m => `
     <div class="card">
-      <div class="msg-sender">${m.sender}</div>
-      <div class="msg-time">🕐 ${m.time}</div>
-      <div class="msg-body">${m.body}</div>
+      <div class="msg-sender">${"$"}{m.sender}</div>
+      <div class="msg-time">🕐 ${"$"}{m.time}</div>
+      <div class="msg-body">${"$"}{m.body}</div>
     </div>`).join('');
 }
 
